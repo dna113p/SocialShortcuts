@@ -10,7 +10,7 @@ Hold a modifier key and left-click a player name to whisper, invite or add them 
 
 ## Installation
 
-1. Install it with the CurseForge app under WoW Forever, or copy the `SocialShortcuts` folder into `World of Warcraft/_classic_beta_/Interface/AddOns/`.
+1. Install it with the CurseForge app under WoW Forever, or copy the `SocialShortcuts` folder into `World of Warcraft/_forever_/Interface/AddOns/`.
 2. Restart the game or type `/reload`.
 3. Enable Social Shortcuts in the AddOns list.
 

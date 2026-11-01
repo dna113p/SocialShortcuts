@@ -1,6 +1,6 @@
 # Social Shortcuts
 
-## Unreleased
+## 1.0.0
 
 - Names in the Communities chat window now take the shortcuts too.
 - Add Friend defaults to Shift on Windows instead of the Windows key, which opened the Start menu.

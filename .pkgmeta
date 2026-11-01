@@ -4,4 +4,3 @@ manual-changelog: CHANGELOG.md
 ignore:
   - CLAUDE.md
   - Tests
-  - Tools
