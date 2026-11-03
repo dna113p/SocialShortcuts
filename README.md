@@ -54,7 +54,9 @@ WoW Forever 1.60.x (Interface `16001`). No other addons needed.
 
 ## Restrictions
 
-The shortcuts are off inside restricted content. In dungeons, raids, boss encounters and PvP matches the game hides player names from addons, so the default click runs. Chat lines kept from such content and unit frames whose identity the game hides keep the default click too.
+The shortcuts are off inside restricted content. In dungeons, raids, boss encounters and PvP matches the game hides player names from addons, so the default click runs and a red notice says the shortcuts are off. Chat lines kept from such content and unit frames whose identity the game hides keep the default click too.
+
+In the Group Finder, Invite works where the game's own Invite button does: on a one-player listing while you can invite. Anywhere else it shows a notice instead of sending an invite the server would refuse.
 
 In chat, the game's own click still runs. It opens a whisper on every left-click of a chat name, so Invite and Add Friend from chat leave that whisper box open. Press Escape to close it.
 

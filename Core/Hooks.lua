@@ -21,14 +21,15 @@ end
 local function OnItemRef(link, _, button, chatFrame)
   if button ~= "LeftButton" then return end
 
+  -- Blizzard's own link handler whispers on every left click that is not CHATLINK-modified (Shift by
+  -- default, ItemRefHandlers.lua), so that whisper is left to it, inside lockdown too, and the addon adds
+  -- no second one and no notice.
+  if ns.HeldAction() == "whisper" and not IsModifiedClick("CHATLINK") then return end
+
   -- The action is picked before the link is read, because inside restricted content the link is a secret
   -- that cannot be pattern matched, and PickAction refuses there.
   local action = ns.PickAction()
   if not action then return end
-
-  -- Blizzard's own link handler whispers on every left click that is not CHATLINK-modified (Shift by
-  -- default, ItemRefHandlers.lua), so that whisper is left to it and the addon adds no second one.
-  if action == "whisper" and not IsModifiedClick("CHATLINK") then return end
 
   -- A line kept from restricted content stays secret after the lockdown ends, so its link is checked too.
   if not ns.CanAccess(link) or type(link) ~= "string" then return end
@@ -74,6 +75,16 @@ end
 -- (CompactPartyFrame.lua, Blizzard_CompactRaidFrameContainer.lua), and the function is a plain value.
 local function OnCompactFrameSetUp(frame, setUpFunc)
   if setUpFunc == DefaultCompactUnitFrameSetup then HookUnitFrame(frame) end
+end
+
+-- The raid container passes the setup function it stored when it loaded
+-- (Blizzard_CompactRaidFrameContainer.lua), so once another addon hooks DefaultCompactUnitFrameSetup the
+-- check above misses its frames. Its player frames all sit in its normal update list, and the group frames
+-- sharing that list carry no frameType.
+local function HookRaidContainerFrames(container)
+  for _, frame in ipairs(container.frameUpdateList.normal) do
+    if frame.frameType then HookUnitFrame(frame) end
+  end
 end
 
 local function HookPartyFrames()
@@ -143,6 +154,19 @@ local function OnBrowseEntryClick(frame, button)
   local action = ns.PickAction()
   if not action then return end
 
+  -- Blizzard's own entry menu offers Invite only on a one-member listing while the player may invite
+  -- (Blizzard_LFGVanilla_Browse.lua). The shortcut asks the same function, so it never sends an invite
+  -- the server refuses, and says so where the menu would grey the button out.
+  if action == "invite" then
+    local _, invite = LFGBrowseUtil_GetInviteActionForResult(frame.resultID)
+    if invite then
+      invite()
+    else
+      UIErrorsFrame:AddExternalErrorMessage("Invite isn't available for this listing.")
+    end
+    return
+  end
+
   local info = C_LFGList.GetSearchResultInfo(frame.resultID)
   if info and info.leaderName then ns.RunAction(action, info.leaderName) end
 end
@@ -182,6 +206,12 @@ end)
 EventUtil.ContinueOnAddOnLoaded("Blizzard_GroupFinder_VanillaStyle", function()
   AttachListClick(LFGWhoListFrame.ScrollBox, "OnMouseUp", OnWhoListMouseUp)
   hooksecurefunc("LFGBrowseSearchEntry_OnClick", OnBrowseEntryClick)
+end)
+
+-- Raid frames in the flat layout come from the container, so its list is walked whenever it hands one out.
+EventUtil.ContinueOnAddOnLoaded("Blizzard_CompactRaidFrames", function()
+  HookRaidContainerFrames(CompactRaidFrameContainer)
+  hooksecurefunc(CompactRaidFrameContainer, "GetUnitFrame", HookRaidContainerFrames)
 end)
 
 -- The guild roster is the Communities member list. Every row click funnels through this one call, so the

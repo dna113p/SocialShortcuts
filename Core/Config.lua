@@ -87,20 +87,29 @@ function ns.AssignModifier(actionKey, token)
   ns.db[actionKey] = token
 end
 
--- Inside restricted content the client hands player names, chat links and listing leaders out as secret
--- values. Addon code can neither inspect a secret name nor pass one on: InviteUnit and AddFriend are
--- declared SecretArguments = "AllowedWhenUntainted", so a tainted caller handing them a secret raises.
--- Every click surface asks this first, and the lockdown question takes no argument, so it answers before
--- any surface reads a name.
-function ns.PickAction()
-  if C_ChatInfo.InChatMessagingLockdown() then return nil end
-
+-- The action bound to the modifier held right now, before any restriction is asked.
+function ns.HeldAction()
   local held = HeldModifier()
   if not held then return nil end
 
   for _, action in ipairs(ns.actions) do
     if ns.db[action.key] == held then return action.key end
   end
+end
+
+-- Inside restricted content the client hands player names, chat links and listing leaders out as secret
+-- values. Addon code can neither inspect a secret name nor pass one on: InviteUnit and AddFriend are
+-- declared SecretArguments = "AllowedWhenUntainted", so a tainted caller handing them a secret raises.
+-- Every click surface asks this first, and the lockdown question takes no argument, so it answers before
+-- any surface reads a name. A bound click there says so in Blizzard's red error text, because the default
+-- click that runs instead would look like the shortcut misfired.
+function ns.PickAction()
+  local action = ns.HeldAction()
+  if action and C_ChatInfo.InChatMessagingLockdown() then
+    UIErrorsFrame:AddExternalErrorMessage(ns.title .. " are off here.")
+    return nil
+  end
+  return action
 end
 
 -- The addon has no visible surface of its own, so the first load on an account names the keys once.

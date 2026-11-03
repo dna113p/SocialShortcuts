@@ -8,7 +8,9 @@
 
 ## Rules
 
-- `ns.PickAction` returns nothing while `C_ChatInfo.InChatMessagingLockdown()` is true. Every click surface asks it before reading a name.
+- `ns.PickAction` returns nothing while `C_ChatInfo.InChatMessagingLockdown()` is true. Every click surface asks it before reading a name. A bound click there shows `<Title> are off here.` through `UIErrorsFrame:AddExternalErrorMessage`. The chat whisper check asks `ns.HeldAction` before the gate, so Blizzard's own whisper never gets that notice.
+- Notices go through `UIErrorsFrame:AddExternalErrorMessage`, never chat. There are two: the lockdown notice and the Group Finder one.
+- Group Finder Invite runs the function `LFGBrowseUtil_GetInviteActionForResult` returns, Blizzard's own eligibility check. Without one it shows `Invite isn't available for this listing.`
 - Unit frames check `C_Secrets.CanCompareUnitTokens` and `C_Secrets.ShouldUnitComparisonBeSecret` before `UnitIsUnit`, and `C_Secrets.ShouldUnitIdentityBeSecret` before `UnitNameUnmodified`.
 - Secret checks go through `ns.CanAccess`, which wraps `issecretvalue` in `pcall`.
 - Build unit names with `ns.UnitFullName`, never `GetUnitName`, which ignores its second argument on Forever.
@@ -16,7 +18,7 @@
 - The addon writes no chat state: no whisper tabs, backlog copies, edit box fields or `ACTIVE_CHAT_EDIT_BOX`. So it never closes Blizzard's whisper box.
 - Hook Blizzard code only with `HookScript`, `hooksecurefunc` and ScrollBox callbacks owned by `ns`. No protected calls. Hooks install at file load, through `EventUtil.ContinueOnAddOnLoaded` for Blizzard addons, never at login.
 - Chat names go through one `SetItemRef` post-hook that reads `player:` and `playerCommunity:` links.
-- Compact unit frames are hooked only when set up with `DefaultCompactUnitFrameSetup`, so nameplates and pet frames are never touched.
+- Compact unit frames are hooked only when set up with `DefaultCompactUnitFrameSetup`, so nameplates and pet frames are never touched. The raid container stores that function at load, so its frames are also taken from `frameUpdateList.normal` after each `GetUnitFrame`, which keeps them hooked when another addon hooks the global.
 - Battle.net friend rows take Whisper and Invite only.
 - Settings are an own canvas page through `Settings.RegisterCanvasLayoutCategory`: three `WowStyle1DropdownTemplate` dropdowns over `ns.db` and a Defaults button, placed with the header and row metrics of Blizzard's settings list. Never Blizzard's list dropdowns: picking in one taints Blizzard's own settings until /reload on build 70532, and nameplates then raise secret-value errors (tested 2026-10-21). Own-frame dropdowns stay clean. Blizzard fonts, atlases and templates only. Opening the page in combat waits for `PLAYER_REGEN_ENABLED`.
 - Taking a modifier another action uses swaps the two, in `ns.AssignModifier`.
@@ -31,5 +33,5 @@
 
 ## Checks
 
-- Run `luac -p` on every Lua file and `lua Tests/Assign.lua` after a change. The check covers the modifier swap only.
+- Run `luac -p` on every Lua file and `lua Tests/Assign.lua`, `lua Tests/PickAction.lua` and `lua Tests/Hooks.lua` after a change. They cover the modifier swap, the lockdown gate and its notice, the raid container hook, the Group Finder invite and the chat whisper order only.
 - Turn on `/console scriptErrors 1` and `/console taintLog 1` before testing in game.
