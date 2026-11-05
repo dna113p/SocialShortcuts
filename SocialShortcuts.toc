@@ -4,7 +4,7 @@
 ## Author: miyanko
 ## Version: 1.0.0
 ## Category: Chat
-## IconTexture: Interface\Icons\UI_Chat
+## IconTexture: Interface\Icons\achievement_reputation_01
 ## SavedVariables: SocialShortcutsDB
 ## AddonCompartmentFunc: SocialShortcuts_CompartmentClick
 ## AddonCompartmentFuncOnEnter: SocialShortcuts_CompartmentEnter
