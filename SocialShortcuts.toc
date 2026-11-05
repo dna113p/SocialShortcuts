@@ -2,7 +2,7 @@
 ## Title: Social Shortcuts
 ## Notes: Whispers, invites or befriends a player when you modifier-click their name.
 ## Author: miyanko
-## Version: 1.0.0
+## Version: @project-version@
 ## Category: Chat
 ## IconTexture: Interface\Icons\achievement_reputation_01
 ## SavedVariables: SocialShortcutsDB
