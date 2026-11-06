@@ -1,5 +1,5 @@
--- Checks the raid container hook and the Group Finder invite in Core/Hooks.lua against stubs of the client.
--- Run from the repo root: lua Tests/Hooks.lua
+-- Checks the raid container hook, the Group Finder invite and the chat link cover in Core/Hooks.lua against
+-- stubs of the client. Run from the repo root: lua Tests/Hooks.lua
 local hooks, notices, invites, runs = {}, {}, 0, {}
 hooksecurefunc = function(target, method, hook)
   if type(target) == "string" then target, method, hook = nil, target, method end
@@ -19,7 +19,9 @@ PartyFrame = { PartyMemberFramePool = { EnumerateActive = function() return next
 LFGWhoListFrame = { ScrollBox = { ForEachFrame = function() end } }
 ScrollUtil = { AddInitializedFrameCallback = function() end }
 UIErrorsFrame = { AddExternalErrorMessage = function(_, message) table.insert(notices, message) end }
-C_LFGList = { GetSearchResultInfo = function(id) return { leaderName = "Leader" .. id } end }
+-- Listing 1 is solo and invitable, 2 a group, 3 solo but not invitable by you.
+local members, asksToJoin = { 1, 3, 1 }, true
+C_LFGList = { GetSearchResultInfo = function(id) return { leaderName = "Leader" .. id, numMembers = members[id] } end }
 LFGBrowseUtil_GetInviteActionForResult = function(id)
   if id == 1 then return "Invite", function() invites = invites + 1 end end
   return "Invite", nil
@@ -34,12 +36,36 @@ EventUtil = {
   end,
 }
 
+local cover, registryCallbacks = nil, {}
+UIParent = {}
+CreateFrame = function()
+  cover = { scripts = {}, shown = false }
+  function cover:SetFrameStrata() end
+  function cover:RegisterForClicks() end
+  function cover:RegisterEvent() end
+  function cover:ClearAllPoints() end
+  function cover:SetPoint(_, region, _, x, y) self.anchor = { region = region, x = x, y = y } end
+  function cover:SetSize(width, height) self.width, self.height = width, height end
+  function cover:Show() self.shown = true end
+  function cover:Hide() self.shown = false end
+  function cover:IsShown() return self.shown end
+  function cover:SetScript(script, handler) self.scripts[script] = handler end
+  return cover
+end
+EventRegistry = { RegisterCallback = function(_, event, callback) registryCallbacks[event] = callback end }
+local chatLink, lockdown = false, false
+C_ChatInfo = { InChatMessagingLockdown = function() return lockdown end }
+
 local picked, pickCalls = nil, 0
-IsModifiedClick = function() return false end
+IsModifiedClick = function() return chatLink end
 local ns = {
   HeldAction = function() return picked end,
   PickAction = function() pickCalls = pickCalls + 1 return picked end,
-  RunAction = function(action, name) table.insert(runs, action .. " " .. name) end,
+  RunAction = function(action, name, _, grouped)
+    table.insert(runs, action .. " " .. name .. (grouped == nil and "" or grouped and " grouped" or " solo"))
+  end,
+  CanAccess = function() return true end,
+  AsksToJoin = function() return asksToJoin end,
 }
 assert(loadfile("Core/Hooks.lua"))("SocialShortcuts", ns)
 
@@ -56,18 +82,71 @@ hooks.GetUnitFrame(CompactRaidFrameContainer, "raid2", "flagged")
 Check("a frame handed out later is hooked", flaggedFrame.hooks == 1)
 Check("a frame is never hooked twice", raidFrame.hooks == 1)
 
-picked = "invite"
-hooks.LFGBrowseSearchEntry_OnClick({ resultID = 1 }, "LeftButton")
-Check("an eligible listing gets Blizzard's invite", invites == 1 and #notices == 0 and #runs == 0)
-hooks.LFGBrowseSearchEntry_OnClick({ resultID = 2 }, "LeftButton")
-Check("an ineligible listing gets a notice, no invite", invites == 1 and #notices == 1 and #runs == 0)
-picked = "whisper"
-hooks.LFGBrowseSearchEntry_OnClick({ resultID = 2 }, "LeftButton")
-Check("whisper still goes to the leader", runs[1] == "whisper Leader2")
+local function ClickListing(id) hooks.LFGBrowseSearchEntry_OnClick({ resultID = id }, "LeftButton") end
 
-pickCalls = 0
+picked = "invite"
+ClickListing(1)
+Check("an invitable listing gets Blizzard's invite", invites == 1 and #notices == 0 and #runs == 0)
+ClickListing(2)
+Check("while Invite asks to join, a group listing invites its leader as grouped", runs[1] == "invite Leader2 grouped")
+asksToJoin = false
+ClickListing(2)
+Check("otherwise a group listing gets a notice", #runs == 1 and #notices == 1)
+ClickListing(3)
+Check("a solo listing Blizzard won't invite gets a suggestion", runs[2] == "invite Leader3 solo")
+asksToJoin = true
+
+picked = "whisper"
+ClickListing(2)
+Check("whisper still goes to the leader", runs[3] == "whisper Leader2")
+
+picked, pickCalls = "whisper", 0
 hooks.SetItemRef("player:Name", nil, "LeftButton")
-Check("a chat whisper Blizzard makes never reaches the gate or its notice", pickCalls == 0 and #runs == 1)
+Check("a chat whisper Blizzard makes never reaches the gate or its notice", pickCalls == 0 and #runs == 3)
+
+local line = { text = "[Leader]: LFM", GetText = function(self) return self.text end }
+local function Hover(link)
+  registryCallbacks["ChatFrame.OnHyperlinkEnter"](nil, "ChatFrame1", link, "[Leader]", line, 10, 2, 40, 12)
+end
+
+runs, picked = {}, "invite"
+Hover("player:Leader:12:CHANNEL")
+Check("an invite key over a player name covers exactly that name",
+  cover.shown and cover.anchor.region == line and cover.anchor.x == 10 and cover.width == 40)
+registryCallbacks["ChatFrame.OnHyperlinkLeave"]()
+Check("the cover taking the mouse keeps the name", cover.shown)
+cover.scripts.OnClick()
+Check("a click on the cover runs the action instead of Blizzard's whisper", runs[1] == "invite Leader")
+
+line.text = "[Other]: hi"
+cover.scripts.OnClick()
+Check("a redrawn line drops the click and the cover", #runs == 1 and not cover.shown)
+line.text = "[Leader]: LFM"
+
+picked = "whisper"
+Hover("player:Leader:12:CHANNEL")
+Check("the whisper key leaves the click to Blizzard", not cover.shown)
+picked, chatLink = "friend", true
+Hover("player:Leader:12:CHANNEL")
+Check("the CHATLINK key keeps Blizzard's insert-name or /who", not cover.shown)
+chatLink, picked = false, "invite"
+Hover("item:6948")
+Check("an item link is never covered", not cover.shown)
+lockdown = true
+Hover("player:Leader:12:CHANNEL")
+Check("lockdown leaves the click to Blizzard", not cover.shown)
+lockdown = false
+
+Hover("player:Leader:12:CHANNEL")
+picked = nil
+cover.scripts.OnEvent()
+Check("letting go of the key removes the cover", not cover.shown)
+picked = "invite"
+cover.scripts.OnEvent()
+Check("pressing it again over the name brings the cover back", cover.shown)
+cover.scripts.OnLeave()
+cover.scripts.OnEvent()
+Check("leaving the name drops it", not cover.shown)
 
 print(failures == 0 and "Hooks: all checks passed" or ("Hooks: " .. failures .. " failed"))
 os.exit(failures == 0 and 0 or 1)

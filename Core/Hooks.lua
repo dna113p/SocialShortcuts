@@ -13,11 +13,16 @@ end
 
 -- Chat name links --------------------------------------------------------------------------------
 
--- Main chat windows, the Communities chat and any other text that shows a player link all call SetItemRef
--- with the click (ChatFrame.lua, CommunitiesChatFrame.xml). The post-hook runs after the default handler,
--- so a CHATLINK click has already inserted the name or run a /who, and a whisper opened here does not get
--- the name typed into it. After any other click the whisper box Blizzard opened stays open, since closing
--- it writes chat state.
+-- Every text that shows a player link calls SetItemRef with the click (ChatFrame.lua,
+-- CommunitiesChatFrame.xml), and Blizzard's handler runs first and cannot be cancelled: CHATLINK (Shift)
+-- inserts the name or runs a /who, any other left click opens a whisper (ItemRefHandlers.lua). The post-hook
+-- serves the clicks the link cover below leaves to Blizzard: the CHATLINK key, lockdown and text outside the
+-- chat windows.
+local function PlayerNameFromLink(link)
+  local name = link:match("^player:([^:]+)") or link:match("^playerCommunity:([^:]+)")
+  if name and name ~= "" then return name end
+end
+
 local function OnItemRef(link, _, button, chatFrame)
   if button ~= "LeftButton" then return end
 
@@ -34,9 +39,77 @@ local function OnItemRef(link, _, button, chatFrame)
   -- A line kept from restricted content stays secret after the lockdown ends, so its link is checked too.
   if not ns.CanAccess(link) or type(link) ~= "string" then return end
 
-  local name = link:match("^player:([^:]+)") or link:match("^playerCommunity:([^:]+)")
-  if name and name ~= "" then ns.RunAction(action, name, chatFrame) end
+  local name = PlayerNameFromLink(link)
+  if name then ns.RunAction(action, name, chatFrame) end
 end
+
+-- While a key bound to Invite or Add Friend is held over a player name in chat, an addon button covers
+-- exactly that name and takes the click. Blizzard never sees it, so no whisper opens, and nothing of
+-- Blizzard's is replaced or written. The whisper key keeps Blizzard's own whisper.
+local hoveredLink
+local linkCover = CreateFrame("Button", nil, UIParent)
+linkCover:SetFrameStrata("DIALOG")
+linkCover:RegisterForClicks("LeftButtonUp")
+linkCover:Hide()
+
+local function TakesChatClick()
+  local action = ns.HeldAction()
+  return action and action ~= "whisper" and not IsModifiedClick("CHATLINK")
+    and not C_ChatInfo.InChatMessagingLockdown()
+end
+
+local function UpdateLinkCover()
+  if not hoveredLink or not TakesChatClick() then
+    linkCover:Hide()
+    return
+  end
+
+  local link = hoveredLink
+  linkCover:ClearAllPoints()
+  linkCover:SetPoint("BOTTOMLEFT", link.region, "BOTTOMLEFT", link.left, link.bottom)
+  linkCover:SetSize(link.width, link.height)
+  linkCover:Show()
+end
+
+-- The bounds are offsets from the line's bottom left, as Blizzard's own link tooltips read them
+-- (GameDialogDefs.lua). A link from restricted content is a secret and is never read. The line's text is
+-- kept, so a click after new chat has redrawn the line never acts on a name that is no longer there.
+local function OnChatLinkEnter(chatFrame, link, _, region, left, bottom, width, height)
+  local name = ns.CanAccess(link) and type(link) == "string" and PlayerNameFromLink(link)
+  local text = name and region:GetText()
+  hoveredLink = name and ns.CanAccess(text) and {
+    chatFrame = chatFrame, name = name, region = region, text = text,
+    left = left, bottom = bottom, width = width, height = height,
+  } or nil
+  UpdateLinkCover()
+end
+
+-- The cover itself takes the mouse from the chat line, which counts as leaving the link, so the link is
+-- kept while the cover shows and dropped when the cover is left.
+local function OnChatLinkLeave()
+  if not linkCover:IsShown() then hoveredLink = nil end
+end
+
+linkCover:SetScript("OnLeave", function()
+  hoveredLink = nil
+  linkCover:Hide()
+end)
+
+linkCover:SetScript("OnClick", function()
+  local link = hoveredLink
+  local current = link and link.region:GetText()
+  if not link or not ns.CanAccess(current) or current ~= link.text then
+    hoveredLink = nil
+    linkCover:Hide()
+    return
+  end
+
+  local action = ns.PickAction()
+  if action then ns.RunAction(action, link.name, link.chatFrame) end
+end)
+
+linkCover:RegisterEvent("MODIFIER_STATE_CHANGED")
+linkCover:SetScript("OnEvent", UpdateLinkCover)
 
 -- Unit frames ------------------------------------------------------------------------------------
 
@@ -62,8 +135,8 @@ local function OnUnitFrameClick(frame, button)
   if not unit or not IsOtherPlayer(unit) then return end
 
   -- The name Blizzard's own unit menu would pass for this unit (Core/Names.lua), so invite and add friend
-  -- get "First Surname".
-  ns.RunAction(action, ns.UnitFullName(unit))
+  -- get "First Surname". The group check is the one Blizzard's menu makes before it offers Request to Join.
+  ns.RunAction(action, ns.UnitFullName(unit), nil, UnitInAnyGroup(unit, LE_PARTY_CATEGORY_HOME))
 end
 
 local function HookUnitFrame(frame)
@@ -154,21 +227,27 @@ local function OnBrowseEntryClick(frame, button)
   local action = ns.PickAction()
   if not action then return end
 
-  -- Blizzard's own entry menu offers Invite only on a one-member listing while the player may invite
-  -- (Blizzard_LFGVanilla_Browse.lua). The shortcut asks the same function, so it never sends an invite
-  -- the server refuses, and says so where the menu would grey the button out.
-  if action == "invite" then
-    local _, invite = LFGBrowseUtil_GetInviteActionForResult(frame.resultID)
-    if invite then
-      invite()
-    else
-      UIErrorsFrame:AddExternalErrorMessage("Invite isn't available for this listing.")
-    end
+  local info = C_LFGList.GetSearchResultInfo(frame.resultID)
+  local leader = info and info.leaderName
+  if not leader then return end
+  if action ~= "invite" then
+    ns.RunAction(action, leader)
     return
   end
 
-  local info = C_LFGList.GetSearchResultInfo(frame.resultID)
-  if info and info.leaderName then ns.RunAction(action, info.leaderName) end
+  -- Blizzard's own entry menu offers Invite only on a one-member listing while the player may invite
+  -- (Blizzard_LFGVanilla_Browse.lua), and the shortcut runs that same function. Past it, a one-member
+  -- listing can only mean a group without lead, so Invite suggests, and a group listing gets a join request
+  -- while Invite asks to join. Anything else says so where the menu greys the button out.
+  local _, invite = LFGBrowseUtil_GetInviteActionForResult(frame.resultID)
+  local grouped = info.numMembers > 1
+  if invite then
+    invite()
+  elseif not grouped or ns.AsksToJoin() then
+    ns.RunAction("invite", leader, nil, grouped)
+  else
+    UIErrorsFrame:AddExternalErrorMessage("Invite isn't available for this listing.")
+  end
 end
 
 -- A Battle.net community lists accounts, whose names may be Kstrings that Blizzard only ever hands to
@@ -194,6 +273,10 @@ end
 -- Hooks go in at file load rather than login, so no frame the client sets up in between is missed.
 hooksecurefunc("SetItemRef", OnItemRef)
 
+-- Every chat window reports link hovers through these two events (ChatFrame.lua).
+EventRegistry:RegisterCallback("ChatFrame.OnHyperlinkEnter", function(_, ...) OnChatLinkEnter(...) end, ns)
+EventRegistry:RegisterCallback("ChatFrame.OnHyperlinkLeave", OnChatLinkLeave, ns)
+
 HookUnitFrames()
 
 -- The friends list rows keep the OnClick their template declares, so one wrapper per row survives.
@@ -214,8 +297,13 @@ EventUtil.ContinueOnAddOnLoaded("Blizzard_CompactRaidFrames", function()
   hooksecurefunc(CompactRaidFrameContainer, "GetUnitFrame", HookRaidContainerFrames)
 end)
 
--- The guild roster is the Communities member list. Every row click funnels through this one call, so the
--- list itself is the only thing worth hooking.
+-- The guild roster is the Communities member list, and every row click funnels through one call. The
+-- Communities chat is a plain message frame without the chat window events, so its own link scripts are
+-- hooked, and it has no chat frame to pass on (CommunitiesChatFrame.xml).
 EventUtil.ContinueOnAddOnLoaded("Blizzard_Communities", function()
   hooksecurefunc(CommunitiesFrame.MemberList, "OnClubMemberButtonClicked", OnGuildMemberClick)
+
+  local messageFrame = CommunitiesFrame.Chat.MessageFrame
+  messageFrame:HookScript("OnHyperlinkEnter", function(_, ...) OnChatLinkEnter(nil, ...) end)
+  messageFrame:HookScript("OnHyperlinkLeave", OnChatLinkLeave)
 end)
