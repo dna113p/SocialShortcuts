@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/dna113p/SocialShortcuts/compare/v1.0.0...v1.1.0) (2026-11-08)
+
+
+### Features
+
+* add configurable world and chat mouseover controls ([bdeac2a](https://github.com/dna113p/SocialShortcuts/commit/bdeac2a0f2acfcdb10a5f858993cf898a3b11779))
+* configure modifier and mouse button for each shortcut ([15cfef4](https://github.com/dna113p/SocialShortcuts/commit/15cfef4b8d8d236473b3aff43e6242a46323c30e))
+
 ## 1.1.0-dj.1 — mouseover fork
 
 
