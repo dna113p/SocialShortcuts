@@ -27,6 +27,16 @@ ns.modifierLabel = isMac and macLabels or pcLabels
 
 local knownTokens = tInvert(ns.modifierOrder)
 
+ns.mouseButtonOrder = { "LeftButton", "RightButton", "MiddleButton", "Button4", "Button5" }
+ns.mouseButtonLabel = {
+  LeftButton = "Left click",
+  RightButton = "Right click",
+  MiddleButton = "Middle click",
+  Button4 = "Mouse button 4",
+  Button5 = "Mouse button 5",
+}
+local knownButtons = tInvert(ns.mouseButtonOrder)
+
 -- Labels are the strings Blizzard's own unit menu shows for the same actions (UnitPopupSharedButtonMixins.lua).
 -- The verb completes the first-run hint.
 ns.actions = {
@@ -34,6 +44,8 @@ ns.actions = {
   { key = "invite", label = PARTY_INVITE, verb = "invite", help = "Invite the clicked player to your group." },
   { key = "friend", label = ADD_FRIEND, verb = "add as a friend", help = "Add the clicked player to your friends list." },
 }
+local knownActions = {}
+for _, action in ipairs(ns.actions) do knownActions[action.key] = true end
 
 -- Defaults follow reach from a hand on WASD: Invite, used most, gets the key next to the space bar, and
 -- Whisper the next easiest. Shift goes to Add Friend, because a Shift-click on a chat name also runs the
@@ -43,12 +55,16 @@ ns.defaults = {
   whisper = isMac and "ALT" or "CTRL",
   invite = isMac and "META" or "ALT",
   friend = "SHIFT",
+  whisperButton = "LeftButton",
+  inviteButton = "LeftButton",
+  friendButton = "LeftButton",
   askToJoin = true,
+  worldMouseover = true,
 }
 
 -- The Mac client can turn Command-left-click into a right click
--- (Blizzard_SettingsDefinitions_Shared/Mac.lua). A right click never reaches the shortcuts, so Command works
--- as a key only while that option is off.
+-- (Blizzard_SettingsDefinitions_Shared/Mac.lua). That translation changes the configured mouse button, so
+-- Command works as a predictable shortcut modifier only while that option is off.
 local COMMAND_RIGHT_CLICK = "MacUseCommandLeftClickAsRightClick"
 
 function ns.IsCommandFree()
@@ -100,27 +116,50 @@ local function HeldModifier()
   return held
 end
 
--- Taking a modifier another action already uses swaps the two, because quietly unbinding the other action
--- would take away a shortcut the user never asked to give up.
-function ns.AssignModifier(actionKey, token)
-  local previous = ns.db[actionKey]
-  if previous == token then return end
+local function MouseButton(actionKey)
+  return ns.db[actionKey .. "Button"] or ns.defaults[actionKey .. "Button"]
+end
 
+-- Only the complete modifier and mouse-button combination is exclusive. Taking another action's shortcut
+-- swaps both parts, preserving the displaced action's shortcut rather than silently disabling it.
+local function AssignShortcut(actionKey, token, button)
+  if not knownActions[actionKey] or not knownTokens[token] or not knownButtons[button] then return false end
+
+  local previousToken = ns.db[actionKey]
+  local previousButton = MouseButton(actionKey)
+  if previousToken == token and previousButton == button then return false end
   if token ~= "NONE" then
     for _, action in ipairs(ns.actions) do
-      if action.key ~= actionKey and ns.db[action.key] == token then ns.db[action.key] = previous end
+      if action.key ~= actionKey and ns.db[action.key] == token and MouseButton(action.key) == button then
+        ns.db[action.key] = previousToken
+        ns.db[action.key .. "Button"] = previousButton
+      end
     end
   end
   ns.db[actionKey] = token
+  ns.db[actionKey .. "Button"] = button
+  return true
 end
 
--- The action bound to the modifier held right now, before any restriction is asked.
-function ns.HeldAction()
+function ns.AssignModifier(actionKey, token)
+  if not knownActions[actionKey] then return false end
+  return AssignShortcut(actionKey, token, MouseButton(actionKey))
+end
+
+function ns.AssignMouseButton(actionKey, button)
+  if not knownActions[actionKey] then return false end
+  return AssignShortcut(actionKey, ns.db[actionKey], button)
+end
+
+-- Without a button this is a non-consuming modifier lookup for hover detection. Actual clicks supply
+-- their button so actions may share a modifier without matching the same click.
+function ns.HeldAction(button)
+  if button and not knownButtons[button] then return nil end
   local held = HeldModifier()
   if not held then return nil end
 
   for _, action in ipairs(ns.actions) do
-    if ns.db[action.key] == held then return action.key end
+    if ns.db[action.key] == held and (not button or MouseButton(action.key) == button) then return action.key end
   end
 end
 
@@ -130,13 +169,21 @@ end
 -- secret raises. Every click surface asks this first, and the lockdown question takes no argument, so it
 -- answers before any surface reads a name. A bound click there says so in Blizzard's red error text,
 -- because the default click that runs instead would look like the shortcut misfired.
-function ns.PickAction()
-  local action = ns.HeldAction()
-  if action and C_ChatInfo.InChatMessagingLockdown() then
+function ns.CanRunAction(action)
+  if not knownActions[action] then return false end
+  if C_ChatInfo.InChatMessagingLockdown() then
     UIErrorsFrame:AddExternalErrorMessage(ns.title .. " are off here.")
-    return nil
+    return false
   end
-  return action
+  return true
+end
+
+function ns.PickAction(button)
+  -- A mouse button assigned through WoW's native keybindings is dispatched by the hover binding handler.
+  -- Letting a frame's modifier-click handler dispatch it too would send the same action twice.
+  if button and ns.IsHoverBinding and ns.IsHoverBinding(button) then return nil end
+  local action = ns.HeldAction(button)
+  if ns.CanRunAction(action) then return action end
 end
 
 -- The addon has no visible surface of its own, so the first load on an account names the keys once. A
@@ -146,11 +193,12 @@ local function PrintFirstRunHint(note)
   for _, action in ipairs(ns.actions) do
     local token = ns.db[action.key]
     if token ~= "NONE" then
-      table.insert(bindings, ns.modifierLabel[token] .. " to " .. action.verb)
+      table.insert(bindings, ns.modifierLabel[token] .. " + " .. ns.mouseButtonLabel[MouseButton(action.key)]
+        .. " to " .. action.verb)
     end
   end
-  local hint = "Hold a key and left-click a player name: " .. table.concat(bindings, ", ")
-    .. ". Type /ssc to change the keys."
+  local hint = "Player shortcuts: " .. table.concat(bindings, ", ")
+    .. ". Type /ssc to change shortcuts and find mouseover keybindings."
   ns.Print(note and hint .. " " .. note or hint)
 end
 
@@ -166,12 +214,28 @@ local function LoadSettings()
   end
   for key, value in pairs(ns.defaults) do
     local saved = SocialShortcutsDB[key]
-    local valid = type(value) == "boolean" and type(saved) == "boolean" or knownTokens[saved]
-    if not valid then
-      SocialShortcutsDB[key] = value
+    local valid
+    if type(value) == "boolean" then
+      valid = type(saved) == "boolean"
+    elseif knownActions[key] then
+      valid = knownTokens[saved]
+    else
+      valid = knownButtons[saved]
     end
+    if not valid then SocialShortcutsDB[key] = value end
   end
   ns.db = SocialShortcutsDB
+
+  -- Old settings had no button fields. They migrate to left click above. If a manually edited or repaired
+  -- profile contains duplicate combinations, preserve the first and disable the duplicate click shortcut.
+  local used = {}
+  for _, action in ipairs(ns.actions) do
+    local token = ns.db[action.key]
+    if token ~= "NONE" then
+      local combination = token .. ":" .. MouseButton(action.key)
+      if used[combination] then ns.db[action.key] = "NONE" else used[combination] = true end
+    end
+  end
 
   if firstRun then PrintFirstRunHint(ns.FreeCommandKey()) end
 end
