@@ -1,4 +1,4 @@
--- Checks the platform labels, the first load, the Command key and the modifier swap in Core/Config.lua
+-- Checks platform labels, migration, validation and shortcut swaps in Core/Config.lua
 -- against stubs of the client. Run from the repo root: lua Tests/Assign.lua
 C_AddOns = { GetAddOnMetadata = function() return "Social Shortcuts" end }
 IsShiftKeyDown, IsControlKeyDown, IsAltKeyDown, IsMetaKeyDown = nil, nil, nil, nil
@@ -30,6 +30,11 @@ Check("macOS names the keys Shift, Control, Option and Command",
 
 Check("Mac defaults: Option whispers, Command invites, Shift adds a friend",
   ns.defaults.whisper == "ALT" and ns.defaults.invite == "META" and ns.defaults.friend == "SHIFT")
+Check("all click defaults use the left button",
+  ns.defaults.whisperButton == "LeftButton" and ns.defaults.inviteButton == "LeftButton"
+  and ns.defaults.friendButton == "LeftButton")
+Check("the mouse dropdown exposes five supported buttons",
+  #ns.mouseButtonOrder == 5 and ns.mouseButtonOrder[5] == "Button5" and ns.mouseButtonLabel.MiddleButton == "Middle click")
 
 Check("Command is taken while the game treats Command-click as a right click", not ns.IsCommandFree())
 local lines, realPrint = {}, print
@@ -53,9 +58,30 @@ onLoaded()
 Check("a saved Windows key binding falls back to the default", pc.db.friend == "SHIFT")
 Check("a setting the addon no longer has is dropped", pc.db.join == nil)
 Check("a missing toggle starts on", pc.db.askToJoin == true)
-SocialShortcutsDB = { whisper = "CTRL", invite = "ALT", friend = "SHIFT", askToJoin = false }
+Check("old profiles migrate all click buttons without changing modifiers",
+  pc.db.whisper == "CTRL" and pc.db.invite == "ALT" and pc.db.whisperButton == "LeftButton"
+  and pc.db.inviteButton == "LeftButton" and pc.db.friendButton == "LeftButton")
+Check("world mouseover starts enabled", pc.db.worldMouseover == true)
+SocialShortcutsDB = { whisper = "CTRL", invite = "ALT", friend = "SHIFT", askToJoin = false, worldMouseover = false,
+  whisperButton = "MiddleButton", inviteButton = "Button4", friendButton = "Button5" }
 onLoaded()
 Check("a saved toggle off stays off", pc.db.askToJoin == false)
+Check("world mouseover and custom buttons persist",
+  pc.db.worldMouseover == false and pc.db.whisperButton == "MiddleButton"
+  and pc.db.inviteButton == "Button4" and pc.db.friendButton == "Button5")
+Check("loaded settings use the saved table directly", pc.db == SocialShortcutsDB)
+SocialShortcutsDB = { whisper = "BAD", invite = false, friend = "SHIFT", whisperButton = "CTRL",
+  inviteButton = "Button6", friendButton = false, askToJoin = "CTRL", worldMouseover = "ALT" }
+onLoaded()
+Check("invalid modifiers and buttons reset to valid defaults",
+  pc.db.whisper == "CTRL" and pc.db.invite == "ALT" and pc.db.whisperButton == "LeftButton"
+  and pc.db.inviteButton == "LeftButton" and pc.db.friendButton == "LeftButton")
+Check("modifier strings are not accepted as saved booleans", pc.db.askToJoin == true and pc.db.worldMouseover == true)
+SocialShortcutsDB = { whisper = "CTRL", invite = "CTRL", friend = "CTRL",
+  whisperButton = "LeftButton", inviteButton = "RightButton", friendButton = "LeftButton" }
+onLoaded()
+Check("loading permits one modifier with distinct buttons but disables duplicate combinations",
+  pc.db.whisper == "CTRL" and pc.db.invite == "CTRL" and pc.db.friend == "NONE")
 commandRightClick = true
 Check("Windows never reads or changes the Mac option", pc.IsCommandFree() and pc.FreeCommandKey() == nil and commandRightClick)
 Check("Windows defaults: Ctrl whispers, Alt invites, Shift adds a friend",
@@ -73,6 +99,31 @@ Check("a free key moves without a swap",
   ns.db.whisper == "SHIFT" and ns.db.invite == "NONE" and ns.db.friend == "NONE")
 ns.AssignModifier("whisper", "SHIFT")
 Check("the same key again changes nothing", ns.db.whisper == "SHIFT")
+
+ns.db = { whisper = "CTRL", invite = "ALT", friend = "SHIFT",
+  whisperButton = "LeftButton", inviteButton = "RightButton", friendButton = "Button5" }
+ns.AssignModifier("whisper", "ALT")
+Check("sharing a modifier with a different button does not swap",
+  ns.db.whisper == "ALT" and ns.db.invite == "ALT" and ns.db.inviteButton == "RightButton")
+ns.AssignMouseButton("whisper", "RightButton")
+Check("taking a used button combination swaps the complete shortcuts",
+  ns.db.whisper == "ALT" and ns.db.whisperButton == "RightButton"
+  and ns.db.invite == "ALT" and ns.db.inviteButton == "LeftButton")
+ns.AssignMouseButton("friend", "RightButton")
+Check("the same button with a different modifier does not conflict",
+  ns.db.friend == "SHIFT" and ns.db.friendButton == "RightButton" and ns.db.whisper == "ALT")
+ns.AssignModifier("friend", "ALT")
+Check("a modifier conflict also swaps both parts",
+  ns.db.friend == "ALT" and ns.db.friendButton == "RightButton"
+  and ns.db.whisper == "SHIFT" and ns.db.whisperButton == "RightButton")
+ns.AssignModifier("friend", "NONE")
+ns.AssignMouseButton("friend", "Button4")
+Check("disabled actions retain their configurable mouse button", ns.db.friend == "NONE" and ns.db.friendButton == "Button4")
+Check("reassigning the same button is a no-op", ns.AssignMouseButton("friend", "Button4") == false)
+Check("unknown actions and shortcut values are rejected",
+  ns.AssignModifier("missing", "CTRL") == false and ns.AssignMouseButton("missing", "Button4") == false
+  and ns.AssignModifier("whisper", "BAD") == false and ns.AssignMouseButton("whisper", "Button6") == false
+  and ns.db.whisper == "SHIFT" and ns.db.whisperButton == "RightButton" and ns.db.missing == nil)
 
 print(failures == 0 and "Assign: all checks passed" or ("Assign: " .. failures .. " failed"))
 os.exit(failures == 0 and 0 or 1)

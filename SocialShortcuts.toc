@@ -1,11 +1,10 @@
 ## Interface: 16001
 ## Title: Social Shortcuts
-## Notes: Whispers, invites, asks to join or befriends a player when you modifier-click their name.
-## Author: miyanko
+## Notes: Configurable clicks and hover keybindings for player names, frames and characters in the world.
+## Author: miyanko; mouseover fork by dna113p
 ## Version: @project-version@
 ## Category: Chat
 ## IconTexture: Interface\Icons\achievement_reputation_01
-## X-Curse-Project-ID: 1786000
 ## SavedVariables: SocialShortcutsDB
 ## AddonCompartmentFunc: SocialShortcuts_CompartmentClick
 ## AddonCompartmentFuncOnEnter: SocialShortcuts_CompartmentEnter
@@ -13,10 +12,11 @@
 
 # Load order is the dependency order: Config exports the binding lookup and the secret guard, Names a
 # unit's name in Blizzard's own menu form, Actions the three things a binding can do, and Hooks wires the
-# click surfaces to all of them. UI only reads what Config already set up.
+# click surfaces to all of them. Hover dispatches keybindings and world clicks; UI configures them.
 
 Core\Config.lua
 Core\Names.lua
 Core\Actions.lua
+Core\Hover.lua
 Core\Hooks.lua
 UI\Options.lua

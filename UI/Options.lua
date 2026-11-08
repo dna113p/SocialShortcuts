@@ -2,11 +2,17 @@ local _, ns = ...
 
 local categoryID
 local dropdowns = {}
-local askToJoinCheckbox
+local checkboxes = {}
 
 local askToJoin = {
+  key = "askToJoin",
   label = "Invite Asks to Join",
   help = "While you are alone, Invite asks to join a player who is already in a group.",
+}
+local worldMouseover = {
+  key = "worldMouseover",
+  label = "World Mouseover",
+  help = "Enable shortcuts and assigned keybindings while hovering a player in the world.",
 }
 
 -- The page is its own canvas, not Blizzard's settings list. Picking in a list dropdown runs the addon's
@@ -16,7 +22,7 @@ local askToJoin = {
 -- Blizzard_SettingControls.xml.
 local ROW_HEIGHT = 26
 local ROW_SPACING = 9
-local FIRST_ROW_Y = -64
+local FIRST_ROW_Y = -89
 
 -- A swap can change another row, and its menu is closed, so a refresh of its selection text is enough.
 local function RefreshDropdowns()
@@ -44,7 +50,7 @@ local function AddRow(panel, index, entry)
   local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   label:SetJustifyH("LEFT")
   label:SetPoint("LEFT", 37, 0)
-  label:SetPoint("RIGHT", row, "CENTER", -85, 0)
+  label:SetPoint("RIGHT", row, "CENTER", -105, 0)
   label:SetText(entry.label)
   return row
 end
@@ -53,8 +59,8 @@ local function AddActionRow(panel, action, index)
   local row = AddRow(panel, index, action)
 
   local dropdown = CreateFrame("DropdownButton", nil, row, "WowStyle1DropdownTemplate")
-  dropdown:SetWidth(220)
-  dropdown:SetPoint("LEFT", row, "CENTER", -40, 0)
+  dropdown:SetWidth(140)
+  dropdown:SetPoint("LEFT", row, "CENTER", -90, 0)
   dropdown:HookScript("OnEnter", function() ShowHelp(dropdown, action) end)
   dropdown:HookScript("OnLeave", GameTooltip_Hide)
   dropdown:SetupMenu(function(_, rootDescription)
@@ -82,29 +88,47 @@ local function AddActionRow(panel, action, index)
   -- Generated once here, because the frame is hidden until the panel shows it.
   dropdown:GenerateMenu()
   dropdowns[action.key] = dropdown
+
+  local mouseDropdown = CreateFrame("DropdownButton", nil, row, "WowStyle1DropdownTemplate")
+  mouseDropdown:SetWidth(160)
+  mouseDropdown:SetPoint("LEFT", row, "CENTER", 65, 0)
+  mouseDropdown:HookScript("OnEnter", function() ShowHelp(mouseDropdown, action) end)
+  mouseDropdown:HookScript("OnLeave", GameTooltip_Hide)
+  mouseDropdown:SetupMenu(function(_, rootDescription)
+    for _, button in ipairs(ns.mouseButtonOrder) do
+      rootDescription:CreateRadio(ns.mouseButtonLabel[button],
+        function() return ns.db[action.key .. "Button"] == button end,
+        function()
+          ns.AssignMouseButton(action.key, button)
+          RefreshDropdowns()
+        end)
+    end
+  end)
+  mouseDropdown:GenerateMenu()
+  dropdowns[action.key .. "Button"] = mouseDropdown
 end
 
 -- The checkbox and its offsets are the ones Blizzard's settings list builds for a checkbox row
 -- (SettingsCheckboxControlMixin), placed on the addon's own canvas for the same taint reason as the
 -- dropdowns. Init wires the click to its own callback registry, the way the list control listens to it.
-local function AddAskToJoinRow(panel, index)
-  local row = AddRow(panel, index, askToJoin)
+local function AddCheckboxRow(panel, index, entry)
+  local row = AddRow(panel, index, entry)
 
   local checkbox = CreateFrame("CheckButton", nil, row, "SettingsCheckboxTemplate")
-  checkbox:SetPoint("LEFT", row, "CENTER", -80, 0)
-  checkbox:Init(ns.db.askToJoin, function()
-    GameTooltip_SetTitle(SettingsTooltip, askToJoin.label)
-    GameTooltip_AddNormalLine(SettingsTooltip, askToJoin.help)
+  checkbox:SetPoint("LEFT", row, "CENTER", -90, 0)
+  checkbox:Init(ns.db[entry.key], function()
+    GameTooltip_SetTitle(SettingsTooltip, entry.label)
+    GameTooltip_AddNormalLine(SettingsTooltip, entry.help)
   end)
   checkbox:RegisterCallback(SettingsCheckboxMixin.Event.OnValueChanged, function(_, checked)
-    ns.db.askToJoin = checked
+    ns.db[entry.key] = checked
   end, row)
-  askToJoinCheckbox = checkbox
+  checkboxes[entry.key] = checkbox
 end
 
 local function RestoreDefaults()
   for key, value in pairs(ns.defaults) do ns.db[key] = value end
-  askToJoinCheckbox:SetValue(ns.db.askToJoin)
+  for key, checkbox in pairs(checkboxes) do checkbox:SetValue(ns.db[key]) end
   local note = ns.FreeCommandKey()
   if note then ns.Print(note) end
   RefreshDropdowns()
@@ -128,8 +152,25 @@ local function BuildPanel()
   defaults:SetText(SETTINGS_DEFAULTS)
   defaults:SetScript("OnClick", RestoreDefaults)
 
+  local modifierHeading = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  modifierHeading:SetPoint("TOPLEFT", panel, "TOP", -90, -66)
+  modifierHeading:SetText("Modifier")
+  local mouseHeading = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  mouseHeading:SetPoint("TOPLEFT", panel, "TOP", 65, -66)
+  mouseHeading:SetText("Mouse button")
+
   for index, action in ipairs(ns.actions) do AddActionRow(panel, action, index) end
-  AddAskToJoinRow(panel, #ns.actions + 1)
+  AddCheckboxRow(panel, #ns.actions + 1, worldMouseover)
+  AddCheckboxRow(panel, #ns.actions + 2, askToJoin)
+
+  local bindingHelp = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  local helpY = FIRST_ROW_Y - (#ns.actions + 2) * (ROW_HEIGHT + ROW_SPACING) - 12
+  bindingHelp:SetPoint("TOPLEFT", 37, helpY)
+  bindingHelp:SetPoint("TOPRIGHT", -37, helpY)
+  bindingHelp:SetJustifyH("LEFT")
+  bindingHelp:SetText("These shortcuts use one modifier plus a mouse click. None disables a click shortcut.\n\n"
+    .. "For any keyboard or mouse key, open WoW Options > Keybindings > AddOns > Social Shortcuts.\n"
+    .. "Hover a player name or character, then press your assigned key. These bindings start unassigned.")
   return panel
 end
 
@@ -176,7 +217,8 @@ function SocialShortcuts_CompartmentEnter(_, menuButton)
   for _, action in ipairs(ns.actions) do
     local token = ns.db[action.key]
     if token ~= "NONE" then
-      GameTooltip_AddColoredDoubleLine(GameTooltip, ns.modifierLabel[token] .. "-click", action.label,
+      local button = ns.db[action.key .. "Button"]
+      GameTooltip_AddColoredDoubleLine(GameTooltip, ns.modifierLabel[token] .. " + " .. ns.mouseButtonLabel[button], action.label,
         HIGHLIGHT_FONT_COLOR, HIGHLIGHT_FONT_COLOR)
     end
   end

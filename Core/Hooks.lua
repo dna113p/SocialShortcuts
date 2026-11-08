@@ -24,23 +24,22 @@ local function PlayerNameFromLink(link)
 end
 
 local function OnItemRef(link, _, button, chatFrame)
-  if button ~= "LeftButton" then return end
-
   -- Blizzard's own link handler whispers on every left click that is not CHATLINK-modified (Shift by
   -- default, ItemRefHandlers.lua), so that whisper is left to it, inside lockdown too, and the addon adds
   -- no second one and no notice.
-  if ns.HeldAction() == "whisper" and not IsModifiedClick("CHATLINK") then return end
+  if button == "LeftButton" and ns.HeldAction(button) == "whisper" and not IsModifiedClick("CHATLINK")
+    and not ns.IsHoverBinding(button) then return end
 
   -- The action is picked before the link is read, because inside restricted content the link is a secret
   -- that cannot be pattern matched, and PickAction refuses there.
-  local action = ns.PickAction()
-  if not action then return end
-
-  -- A line kept from restricted content stays secret after the lockdown ends, so its link is checked too.
-  if not ns.CanAccess(link) or type(link) ~= "string" then return end
-
-  local name = PlayerNameFromLink(link)
-  if name then ns.RunAction(action, name, chatFrame) end
+  ns.RunClickAction(button, function(action)
+    -- A line kept from restricted content stays secret after lockdown ends, so check the payload too.
+    if not ns.CanAccess(link) or type(link) ~= "string" then return false end
+    local name = PlayerNameFromLink(link)
+    if not name then return false end
+    ns.RunAction(action, name, chatFrame)
+    return true
+  end)
 end
 
 -- While a key bound to Invite or Add Friend is held over a player name in chat, an addon button covers
@@ -49,13 +48,18 @@ end
 local hoveredLink
 local linkCover = CreateFrame("Button", nil, UIParent)
 linkCover:SetFrameStrata("DIALOG")
-linkCover:RegisterForClicks("LeftButtonUp")
+linkCover:RegisterForClicks("AnyUp")
 linkCover:Hide()
 
 local function TakesChatClick()
-  local action = ns.HeldAction()
-  return action and action ~= "whisper" and not IsModifiedClick("CHATLINK")
-    and not C_ChatInfo.InChatMessagingLockdown()
+  if C_ChatInfo.InChatMessagingLockdown() then return false end
+  for _, button in ipairs(ns.mouseButtonOrder) do
+    local native = ns.GetHoverBindingAction(button)
+    local action = native or ns.HeldAction(button)
+    if action and (native or button ~= "LeftButton"
+      or (action ~= "whisper" and not IsModifiedClick("CHATLINK"))) then return true end
+  end
+  return false
 end
 
 local function UpdateLinkCover()
@@ -74,11 +78,11 @@ end
 -- The bounds are offsets from the line's bottom left, as Blizzard's own link tooltips read them
 -- (GameDialogDefs.lua). A link from restricted content is a secret and is never read. The line's text is
 -- kept, so a click after new chat has redrawn the line never acts on a name that is no longer there.
-local function OnChatLinkEnter(chatFrame, link, _, region, left, bottom, width, height)
+local function OnChatLinkEnter(chatFrame, link, label, region, left, bottom, width, height)
   local name = ns.CanAccess(link) and type(link) == "string" and PlayerNameFromLink(link)
   local text = name and region:GetText()
   hoveredLink = name and ns.CanAccess(text) and {
-    chatFrame = chatFrame, name = name, region = region, text = text,
+    chatFrame = chatFrame, name = name, region = region, text = text, link = link, label = label,
     left = left, bottom = bottom, width = width, height = height,
   } or nil
   UpdateLinkCover()
@@ -95,20 +99,36 @@ linkCover:SetScript("OnLeave", function()
   linkCover:Hide()
 end)
 
-linkCover:SetScript("OnClick", function()
+function ns.GetHoveredChatTarget()
   local link = hoveredLink
+  if not link then return nil, nil, false end
   local current = link and link.region:GetText()
-  if not link or not ns.CanAccess(current) or current ~= link.text then
+  if not ns.CanAccess(current) or current ~= link.text
+    or (link.region.IsVisible and not link.region:IsVisible()) then
     hoveredLink = nil
     linkCover:Hide()
+    return nil, nil, true
+  end
+  return link.name, link.chatFrame, true
+end
+
+linkCover:SetScript("OnClick", function(_, button)
+  local name, chatFrame = ns.GetHoveredChatTarget()
+  if not name then return end
+  -- Covering one configured button must not swallow an unrelated right-click or other normal click.
+  if not ns.GetHoverBindingAction(button) and not ns.HeldAction(button) then
+    local link = hoveredLink
+    SetItemRef(link.link, link.label, button, chatFrame)
     return
   end
-
-  local action = ns.PickAction()
-  if action then ns.RunAction(action, link.name, link.chatFrame) end
+  ns.RunClickAction(button, function(action)
+    ns.RunAction(action, name, chatFrame)
+    return true
+  end)
 end)
 
 linkCover:RegisterEvent("MODIFIER_STATE_CHANGED")
+linkCover:RegisterEvent("UPDATE_BINDINGS")
 linkCover:SetScript("OnEvent", UpdateLinkCover)
 
 -- Unit frames ------------------------------------------------------------------------------------
@@ -116,31 +136,21 @@ linkCover:SetScript("OnEvent", UpdateLinkCover)
 -- Unit comparison has restrictions of its own, apart from the chat lockdown: the client refuses a
 -- comparison it does not permit and returns a secret for a restricted one, so both are asked before
 -- UnitIsUnit.
-local function IsOtherPlayer(unit)
-  if not UnitIsPlayer(unit) then return false end
-  if not C_Secrets.CanCompareUnitTokens(unit, "player") then return false end
-  if C_Secrets.ShouldUnitComparisonBeSecret(unit, "player") then return false end
-  return not UnitIsUnit(unit, "player")
-end
-
 -- Compact frames carry displayedUnit and party member frames GetUnit, which keeps the member's own unit
 -- while they ride a vehicle. Target and focus frames only carry unit.
-local function OnUnitFrameClick(frame, button)
-  if button ~= "LeftButton" then return end
-
-  local action = ns.PickAction()
-  if not action then return end
-
+local function RunUnitFrameAction(frame, action)
   local unit = frame.displayedUnit or (frame.GetUnit and frame:GetUnit()) or frame.unit
-  if not unit or not IsOtherPlayer(unit) then return end
-
-  -- The name Blizzard's own unit menu would pass for this unit (Core/Names.lua), so invite and add friend
-  -- get "First Surname". The group check is the one Blizzard's menu makes before it offers Request to Join.
-  ns.RunAction(action, ns.UnitFullName(unit), nil, UnitInAnyGroup(unit, LE_PARTY_CATEGORY_HOME))
+  return unit and ns.RunUnitAction(action, unit) or false
 end
 
 local function HookUnitFrame(frame)
-  HookScriptOnce(frame, "OnClick", OnUnitFrameClick)
+  -- OnMouseUp receives buttons the template does not register for OnClick, without changing its secure
+  -- click registration. Leave every native target/menu action in place.
+  HookScriptOnce(frame, "OnMouseUp", function(_, button, upInside)
+    if upInside == false then return end
+    ns.RunClickAction(button, function(action) return RunUnitFrameAction(frame, action) end)
+  end)
+  ns.RegisterHoverFrame(frame, function(action) return RunUnitFrameAction(frame, action) end)
 end
 
 -- The compact setup also runs for nameplates and pet frames, which take no clicks and may be forbidden to
@@ -186,53 +196,51 @@ end
 -- already holds and then on each row as it is handed out. The friends list also hands out plain Frame rows
 -- (dividers and pending invites, Camelot/FriendsFrame.xml), which have no OnClick to hook and would raise
 -- if asked to.
-local function AttachListClick(scrollBox, script, handler)
+local function AttachListClick(scrollBox, handler)
   local function HookRow(frame)
-    if frame:HasScript(script) then HookScriptOnce(frame, script, handler) end
+    if not frame:HasScript("OnMouseUp") then return end
+    HookScriptOnce(frame, "OnMouseUp", function(_, button, upInside)
+      if upInside == false then return end
+      ns.RunClickAction(button, function(action) return handler(frame, action) end)
+    end)
+    ns.RegisterHoverFrame(frame, function(action) return handler(frame, action) end)
   end
 
   scrollBox:ForEachFrame(HookRow)
   ScrollUtil.AddInitializedFrameCallback(scrollBox, function(_, frame) HookRow(frame) end, ns)
 end
 
-local function OnFriendsListClick(frame, button)
-  if button ~= "LeftButton" then return end
-
-  local action = ns.PickAction()
-  if not action then return end
-
+local function RunFriendsListAction(frame, action)
   if frame.buttonType == FRIENDS_BUTTON_TYPE_WOW then
     local info = C_FriendList.GetFriendInfoByIndex(frame.id)
-    if info and info.name then ns.RunAction(action, info.name) end
+    if not info or not info.name then return false end
+    ns.RunAction(action, info.name)
+    return true
   elseif frame.buttonType == FRIENDS_BUTTON_TYPE_BNET then
     ns.RunBNetAction(action, frame.id)
+    return true
   end
+  return false
 end
 
 -- Who rows register RightButtonUp only (WhoList.xml), so a left click never reaches OnClick. Mouse-up
 -- still fires for it, and upInside keeps a press dragged off the row from counting as a click.
-local function OnWhoListMouseUp(frame, button, upInside)
-  if button ~= "LeftButton" or not upInside or not frame.index then return end
-
-  local action = ns.PickAction()
-  if not action then return end
-
+local function RunWhoListAction(frame, action)
+  if not frame.index then return false end
   local info = C_FriendList.GetWhoInfo(frame.index)
-  if info and info.fullName then ns.RunAction(action, info.fullName) end
+  if not info or not info.fullName then return false end
+  ns.RunAction(action, info.fullName)
+  return true
 end
 
-local function OnBrowseEntryClick(frame, button)
-  if button ~= "LeftButton" or frame.isDelisted or frame.hasSelf then return end
-
-  local action = ns.PickAction()
-  if not action then return end
-
+local function RunBrowseEntryAction(frame, action)
+  if not frame.resultID or frame.isDelisted or frame.hasSelf then return false end
   local info = C_LFGList.GetSearchResultInfo(frame.resultID)
   local leader = info and info.leaderName
-  if not leader then return end
+  if not leader then return false end
   if action ~= "invite" then
     ns.RunAction(action, leader)
-    return
+    return true
   end
 
   -- Blizzard's own entry menu offers Invite only on a one-member listing while the player may invite
@@ -248,6 +256,7 @@ local function OnBrowseEntryClick(frame, button)
   else
     UIErrorsFrame:AddExternalErrorMessage("Invite isn't available for this listing.")
   end
+  return true
 end
 
 -- A Battle.net community lists accounts, whose names may be Kstrings that Blizzard only ever hands to
@@ -258,14 +267,12 @@ local function IsBattleNetClub(memberList)
   return clubInfo ~= nil and clubInfo.clubType == Enum.ClubType.BattleNet
 end
 
-local function OnGuildMemberClick(memberList, entry, button)
-  if button ~= "LeftButton" then return end
-
-  local action = ns.PickAction()
-  if not action or IsBattleNetClub(memberList) then return end
-
+local function RunGuildMemberAction(memberList, entry, action)
+  if entry.isInvitation or not entry.GetMemberInfo or IsBattleNetClub(memberList) then return false end
   local info = entry:GetMemberInfo()
-  if info and info.name then ns.RunAction(action, info.name) end
+  if not info or not info.name then return false end
+  ns.RunAction(action, info.name)
+  return true
 end
 
 -- Install ----------------------------------------------------------------------------------------
@@ -281,14 +288,14 @@ HookUnitFrames()
 
 -- The friends list rows keep the OnClick their template declares, so one wrapper per row survives.
 EventUtil.ContinueOnAddOnLoaded("Blizzard_FriendsFrame", function()
-  AttachListClick(FriendsListFrame.ScrollBox, "OnClick", OnFriendsListClick)
+  AttachListClick(FriendsListFrame.ScrollBox, RunFriendsListAction)
 end)
 
 -- The who row initialiser calls SetScript("OnClick") on every pass but leaves OnMouseUp alone, so one
 -- wrapper per row survives there too. Browse rows bind their click through a global entry point.
 EventUtil.ContinueOnAddOnLoaded("Blizzard_GroupFinder_VanillaStyle", function()
-  AttachListClick(LFGWhoListFrame.ScrollBox, "OnMouseUp", OnWhoListMouseUp)
-  hooksecurefunc("LFGBrowseSearchEntry_OnClick", OnBrowseEntryClick)
+  AttachListClick(LFGWhoListFrame.ScrollBox, RunWhoListAction)
+  AttachListClick(LFGBrowseFrame.ScrollBox, RunBrowseEntryAction)
 end)
 
 -- Raid frames in the flat layout come from the container, so its list is walked whenever it hands one out.
@@ -301,7 +308,10 @@ end)
 -- Communities chat is a plain message frame without the chat window events, so its own link scripts are
 -- hooked, and it has no chat frame to pass on (CommunitiesChatFrame.xml).
 EventUtil.ContinueOnAddOnLoaded("Blizzard_Communities", function()
-  hooksecurefunc(CommunitiesFrame.MemberList, "OnClubMemberButtonClicked", OnGuildMemberClick)
+  local memberList = CommunitiesFrame.MemberList
+  AttachListClick(memberList.ScrollBox, function(entry, action)
+    return RunGuildMemberAction(memberList, entry, action)
+  end)
 
   local messageFrame = CommunitiesFrame.Chat.MessageFrame
   messageFrame:HookScript("OnHyperlinkEnter", function(_, ...) OnChatLinkEnter(nil, ...) end)
