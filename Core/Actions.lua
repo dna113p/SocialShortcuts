@@ -81,7 +81,7 @@ end
 -- whisper opens where Blizzard's own link handler would open it. Invites also offer to convert a full party
 -- to a raid.
 function ns.RunAction(action, name, chatFrame, grouped)
-  if not name then return end
+  if not ns.CanAccess(name) or type(name) ~= "string" or name == "" then return end
 
   if action == "whisper" then
     ChatFrameUtil.SendTell(name, chatFrame)

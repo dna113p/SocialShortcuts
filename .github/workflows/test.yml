@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lua: ['5.1', '5.4']
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Lua
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y lua${{ matrix.lua }}
+      - name: Check syntax and behavior
+        env:
+          SOCIAL_SHORTCUTS_LUA: lua${{ matrix.lua }}
+        run: sh Tools/verify.sh
+      - name: Build installable addon
+        run: python3 Tools/package.py 1.1.0-ci

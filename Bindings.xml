@@ -1,0 +1,11 @@
+<Bindings>
+  <Binding name="SOCIALSHORTCUTS_INVITE" header="SOCIALSHORTCUTS" category="ADDONS">
+    SocialShortcuts_RunHoveredAction("invite")
+  </Binding>
+  <Binding name="SOCIALSHORTCUTS_WHISPER" category="ADDONS">
+    SocialShortcuts_RunHoveredAction("whisper")
+  </Binding>
+  <Binding name="SOCIALSHORTCUTS_FRIEND" category="ADDONS">
+    SocialShortcuts_RunHoveredAction("friend")
+  </Binding>
+</Bindings>

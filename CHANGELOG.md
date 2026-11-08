@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0-dj.1 — mouseover fork
+
+
+- Add configurable world/nameplate modifier-clicks for Invite, Whisper, and Add Friend.
+- Add native WoW hover keybindings for chat names, player frames, supported lists, and world players.
+- Allow each action to choose its modifier and Left, Right, Middle, Mouse 4, or Mouse 5 button.
+- Preserve existing saved controls while adding a World Mouseover toggle and complete-shortcut conflict swaps.
+- Reject world actions through unrelated UI or after a detected camera drag, and coordinate native/click dispatch.
+- Add behavioral regression tests and Lua 5.1/5.4 CI. Live-client verification remains necessary.
+
+
 ## 1.0.0 (2026-11-06)
 
 
